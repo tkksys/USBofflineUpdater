@@ -1,6 +1,6 @@
 param(
     [string]$DestinationPath = $PSScriptRoot,
-    [string[]]$Versions = @("21H2", "22H2", "23H2", "24H2", "25H2")
+    [string[]]$Versions = @("22H2", "23H2", "24H2", "25H2")
 )
 
 # Output in English to avoid mojibake
@@ -13,7 +13,7 @@ if ($DestinationPath -is [array] -or [string]::IsNullOrEmpty($DestinationPath)) 
 }
 $DestinationPath = $DestinationPath.ToString().Trim()
 if ($Versions -eq $null -or $Versions.Count -eq 0) {
-    $Versions = @("21H2", "22H2", "23H2", "24H2", "25H2")
+    $Versions = @("22H2", "23H2", "24H2", "25H2")
 }
 
 Write-Host "=== Windows 11 Offline Update Downloader (MSCatalogLTS) ==="
@@ -44,10 +44,14 @@ Import-Module MSCatalogLTS -Force
 
 $totalVersions = $Versions.Count
 $currentStep = 0
+$barWidth = 30
 
 foreach ($ver in $Versions) {
     $currentStep++
     $pct = [math]::Min(100, [int](($currentStep / $totalVersions) * 100))
+    $filled = [int]($barWidth * $currentStep / $totalVersions)
+    $bar = "[" + ("|" * $filled) + ("-" * ($barWidth - $filled)) + "]"
+    Write-Host "Progress: $bar $currentStep/$totalVersions ($pct%)"
     Write-Progress -Activity "Downloading Windows 11 updates" -Status "Version $ver ($currentStep of $totalVersions)" -PercentComplete $pct -CurrentOperation ""
 
     $folderName = "Win11_$ver"
@@ -90,5 +94,7 @@ foreach ($ver in $Versions) {
 }
 
 Write-Progress -Activity "Downloading Windows 11 updates" -Completed
+$bar = "[" + ("|" * $barWidth) + "]"
+Write-Host "Progress: $bar $totalVersions/$totalVersions (100%) - Done."
 $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 Write-Host "[$ts] === Download Complete ==="

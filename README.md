@@ -18,7 +18,7 @@
 ### 1. ネットワーク接続PCでダウンロード（USBに直接保存）
 
 1. **このフォルダごと** USB メモリにコピーし、ネットワーク接続済みの PC に USB を接続
-2. USB 内の `run_download.bat` または `download_updates.bat` を実行
+2. USB 内の `run_download.bat` を実行（内部で `download_updates.ps1` を呼びます）
    - USB のパスは **自動取得**（スクリプトの配置場所 = USB のルートとして使用）
 3. 初回は MSCatalogLTS モジュールが自動インストールされます
 4. 全バージョン（21H2〜25H2）の最新累積更新が、同じ USB の **所定の場所**（`Updates\Win11_xx\`）にダウンロードされます
@@ -34,11 +34,11 @@ powershell -ExecutionPolicy Bypass -File "E:\USBofflineUpdater\download_updates.
 ### 2. オフラインPCでインストール
 
 1. USB メモリをオフラインの Windows 11 PC に接続
-2. USB 内の **管理者として** `run_install.bat` または `install_updates.bat` を実行
+2. USB 内の **管理者として** `run_install.bat` を実行（内部で `install_updates.ps1` を呼びます）
    - 右クリック → 「管理者として実行」
 3. スクリプトが **インストール先PCの Windows バージョン**（21H2/22H2/23H2/24H2/25H2）を自動取得し、対応するフォルダ（例: Win11_24H2）の更新のみをインストール
 4. 再起動が必要な場合は案内されます
-5. ログは USB 内の `logs\` フォルダに保存されます
+5. ログは USB 内の `logs\` に保存されます（実行ごとに `install_yyyyMMdd_HHmmss.log` と `install_<PC名>_yyyyMMdd_HHmm.csv` が作成されます）
 
 ## USBメモリ上の所定の場所（フォルダ構成）
 
@@ -56,7 +56,7 @@ powershell -ExecutionPolicy Bypass -File "E:\USBofflineUpdater\download_updates.
 │   ├── Win11_23H2/
 │   ├── Win11_24H2/
 │   └── Win11_25H2/
-├── logs/                    ← インストールログ
+├── logs/                    ← インストールログ（実行ごとにタイムスタンプ付き .log / .csv）
 └── README.md
 ```
 

@@ -16,6 +16,14 @@ $LogFile = "$LogPath\install_$(Get-Date -Format yyyyMMdd_HHmmss).log"
 # -Encoding not supported in Windows PowerShell 5.1
 Start-Transcript $LogFile
 
+# Best practice: require Administrator (batch also checks; this is a safeguard)
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
+    Write-Host "This script must be run as Administrator."
+    Stop-Transcript
+    exit 1
+}
+
 $RegPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
 $Reg = Get-ItemProperty -Path $RegPath -ErrorAction SilentlyContinue
 
@@ -85,23 +93,38 @@ $msuFiles = @(Get-ChildItem "$UpdatePath\*.msu")
 $totalMsus = $msuFiles.Count
 $currentStep = 0
 
+# Get DISM package list once (detect already-installed CUs that Get-HotFix may miss)
+$ts = Get-Date -Format "HH:mm:ss"
+Write-Host "[$ts] Checking installed packages (DISM)..."
+$dismPackageList = & dism.exe /online /get-packages 2>$null | Out-String
+
+$barWidth = 30
 foreach ($msu in $msuFiles) {
     $currentStep++
     $msuName = $msu.Name
-    $kbMatch = [regex]::Match($msuName, 'KB\d{7}')
-    $kb = if ($kbMatch.Success) { $kbMatch.Value } else { "Unknown" }
+    # Match KB + 7 digits (case-insensitive: windows11.0-kb5043080-x64.msu)
+    $kbMatch = [regex]::Match($msuName, '(?i)kb\d{7}')
+    $kb = if ($kbMatch.Success) { $kbMatch.Value.ToUpperInvariant() } else { "Unknown" }
 
     $pct = if ($totalMsus -gt 0) { [math]::Min(100, [int](($currentStep / $totalMsus) * 100)) } else { 100 }
+    $filled = if ($totalMsus -gt 0) { [int]($barWidth * $currentStep / $totalMsus) } else { $barWidth }
+    $bar = "[" + ("|" * $filled) + ("-" * ($barWidth - $filled)) + "]"
+    Write-Host "Progress: $bar $currentStep/$totalMsus ($pct%)"
     Write-Progress -Activity "Installing Windows 11 updates" -Status "Update $currentStep of $totalMsus" -PercentComplete $pct -CurrentOperation $msuName
 
-    # Check if this update (KB) is already installed
+    # Check if this update (KB) is already installed (Get-HotFix misses some CUs; DISM is more reliable)
     $alreadyInstalled = $false
     if ($kb -ne "Unknown") {
         $hotfix = Get-HotFix -Id $kb -ErrorAction SilentlyContinue
         if ($hotfix) {
             $alreadyInstalled = $true
             $ts = Get-Date -Format "HH:mm:ss"
-            Write-Host "[$ts] Already installed: $msuName (installed $($hotfix.InstalledOn))"
+            Write-Host "[$ts] Already installed: $msuName (Get-HotFix: $($hotfix.InstalledOn))"
+        }
+        if (-not $alreadyInstalled -and $dismPackageList -match [regex]::Escape(($kb -replace '^KB', ''))) {
+            $alreadyInstalled = $true
+            $ts = Get-Date -Format "HH:mm:ss"
+            Write-Host "[$ts] Already installed: $msuName (found in DISM packages)"
         }
     }
 
@@ -128,9 +151,16 @@ foreach ($msu in $msuFiles) {
 
     $ts = Get-Date -Format "HH:mm:ss"
     Write-Host "[$ts] wusa.exe finished (PID $($process.Id) exit code: $($process.ExitCode))"
-    $status = if ($process.ExitCode -eq 0 -or $process.ExitCode -eq 3010) { "Success" } else { "Failed" }
-    if ($process.ExitCode -eq 3010) {
-        $RebootRequired = $true
+    # 0=success, 3010=reboot required, -2145124329/0x80240017=not applicable (e.g. already installed), 2359302=often not applicable
+    $exitCode = $process.ExitCode
+    if ($exitCode -eq 0 -or $exitCode -eq 3010) {
+        $status = "Success"
+        if ($exitCode -eq 3010) { $RebootRequired = $true }
+    } elseif ($exitCode -eq -2145124329 -or $exitCode -eq 2359302) {
+        $status = "Skipped (not applicable)"
+        Write-Host "[$ts] Update not applicable to this system (already installed or wrong build)."
+    } else {
+        $status = "Failed"
     }
 
     $LogEntries += [PSCustomObject]@{
@@ -143,12 +173,32 @@ foreach ($msu in $msuFiles) {
 }
 
 Write-Progress -Activity "Installing Windows 11 updates" -Completed
+if ($totalMsus -gt 0) {
+    $bar = "[" + ("|" * $barWidth) + "]"
+    Write-Host "Progress: $bar $totalMsus/$totalMsus (100%) - Done."
+}
 $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 Write-Host "[$ts] === Installation Complete ==="
 
 # Write CSV log
 $CsvPath = "$LogPath\install_${ComputerName}_$(Get-Date -Format yyyyMMdd_HHmm).csv"
 $LogEntries | Export-Csv -Path $CsvPath -NoTypeInformation -Encoding UTF8
+
+# Success determination: no "Failed" = success (Success, Skipped, Already installed are all OK)
+$failedCount = ($LogEntries | Where-Object { $_.Status -eq "Failed" }).Count
+$successCount = ($LogEntries | Where-Object { $_.Status -eq "Success" }).Count
+$skippedCount = ($LogEntries | Where-Object { $_.Status -eq "Skipped (not applicable)" }).Count
+$alreadyCount = ($LogEntries | Where-Object { $_.Status -eq "Already installed" }).Count
+
+Write-Host "--- Result ---"
+Write-Host "Success: $successCount | Already installed: $alreadyCount | Skipped (not applicable): $skippedCount | Failed: $failedCount"
+if ($failedCount -gt 0) {
+    Write-Host "Overall: Failed ($failedCount update(s) failed)"
+    $script:ExitCode = 1
+} else {
+    Write-Host "Overall: Success"
+    $script:ExitCode = 0
+}
 
 if ($RebootRequired) {
     Write-Host "Reboot required."
@@ -158,3 +208,4 @@ if ($RebootRequired) {
 
 Write-Host "Log: $CsvPath"
 Stop-Transcript
+exit $script:ExitCode
