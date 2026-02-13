@@ -3,6 +3,9 @@
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
 Write-Host "=== Windows 11 Offline Installer ==="
+$ScriptStartTime = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+Write-Host "PID: $PID | Started: $ScriptStartTime | Script: install_updates.ps1"
+Write-Host "Liveness: In Task Manager, find this process by PID $PID; timestamps and child PIDs below show progress."
 
 $LogPath = "$PSScriptRoot\logs"
 if (!(Test-Path $LogPath)) {
@@ -65,7 +68,8 @@ if ($BuildNumber -ge 22000 -and $ProductName -like "*Windows 10*") {
 $TargetFolder = "Win11_$DisplayVersion"
 $UpdatePath = "$PSScriptRoot\Updates\$TargetFolder"
 
-Write-Host "Detected: $ProductName $DisplayVersion (Build $BuildNumber)"
+$ts = Get-Date -Format "HH:mm:ss"
+Write-Host "[$ts] Detected: $ProductName $DisplayVersion (Build $BuildNumber)"
 
 if (!(Test-Path $UpdatePath)) {
     Write-Host "No updates folder found. Check Updates\$TargetFolder"
@@ -77,10 +81,18 @@ $RebootRequired = $false
 $LogEntries = @()
 $ComputerName = $env:COMPUTERNAME
 
-Get-ChildItem "$UpdatePath\*.msu" | ForEach-Object {
-    $msuName = $_.Name
+$msuFiles = @(Get-ChildItem "$UpdatePath\*.msu")
+$totalMsus = $msuFiles.Count
+$currentStep = 0
+
+foreach ($msu in $msuFiles) {
+    $currentStep++
+    $msuName = $msu.Name
     $kbMatch = [regex]::Match($msuName, 'KB\d{7}')
     $kb = if ($kbMatch.Success) { $kbMatch.Value } else { "Unknown" }
+
+    $pct = if ($totalMsus -gt 0) { [math]::Min(100, [int](($currentStep / $totalMsus) * 100)) } else { 100 }
+    Write-Progress -Activity "Installing Windows 11 updates" -Status "Update $currentStep of $totalMsus" -PercentComplete $pct -CurrentOperation $msuName
 
     # Check if this update (KB) is already installed
     $alreadyInstalled = $false
@@ -88,7 +100,8 @@ Get-ChildItem "$UpdatePath\*.msu" | ForEach-Object {
         $hotfix = Get-HotFix -Id $kb -ErrorAction SilentlyContinue
         if ($hotfix) {
             $alreadyInstalled = $true
-            Write-Host "Already installed: $msuName (installed $($hotfix.InstalledOn))"
+            $ts = Get-Date -Format "HH:mm:ss"
+            Write-Host "[$ts] Already installed: $msuName (installed $($hotfix.InstalledOn))"
         }
     }
 
@@ -100,15 +113,21 @@ Get-ChildItem "$UpdatePath\*.msu" | ForEach-Object {
             Status    = "Already installed"
             Date      = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
         }
-        return
+        continue
     }
 
-    Write-Host "Installing $msuName"
+    $ts = Get-Date -Format "HH:mm:ss"
+    Write-Host "[$ts] Installing $msuName (script PID: $PID)"
+    Write-Progress -Activity "Installing Windows 11 updates" -Status "Update $currentStep of $totalMsus - Installing $kb..." -PercentComplete $pct -CurrentOperation "Running wusa.exe..."
 
     $process = Start-Process "wusa.exe" `
-        -ArgumentList "`"$($_.FullName)`" /quiet /norestart" `
-        -Wait -PassThru
+        -ArgumentList "`"$($msu.FullName)`" /quiet /norestart" `
+        -PassThru -WindowStyle Hidden
+    Write-Host "[$ts] wusa.exe started (child PID: $($process.Id)) - check Task Manager for liveness"
+    $null = $process.WaitForExit(-1)
 
+    $ts = Get-Date -Format "HH:mm:ss"
+    Write-Host "[$ts] wusa.exe finished (PID $($process.Id) exit code: $($process.ExitCode))"
     $status = if ($process.ExitCode -eq 0 -or $process.ExitCode -eq 3010) { "Success" } else { "Failed" }
     if ($process.ExitCode -eq 3010) {
         $RebootRequired = $true
@@ -123,11 +142,13 @@ Get-ChildItem "$UpdatePath\*.msu" | ForEach-Object {
     }
 }
 
+Write-Progress -Activity "Installing Windows 11 updates" -Completed
+$ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+Write-Host "[$ts] === Installation Complete ==="
+
 # Write CSV log
 $CsvPath = "$LogPath\install_${ComputerName}_$(Get-Date -Format yyyyMMdd_HHmm).csv"
 $LogEntries | Export-Csv -Path $CsvPath -NoTypeInformation -Encoding UTF8
-
-Write-Host "=== Installation Complete ==="
 
 if ($RebootRequired) {
     Write-Host "Reboot required."

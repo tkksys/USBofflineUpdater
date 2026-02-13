@@ -17,6 +17,9 @@ if ($Versions -eq $null -or $Versions.Count -eq 0) {
 }
 
 Write-Host "=== Windows 11 Offline Update Downloader (MSCatalogLTS) ==="
+$ScriptStartTime = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+Write-Host "PID: $PID | Started: $ScriptStartTime | Script: download_updates.ps1"
+Write-Host "Liveness: In Task Manager, find this process by PID $PID; timestamps below show progress."
 
 # Script location = USB path (auto-detect)
 $UsbRoot = $DestinationPath
@@ -39,7 +42,14 @@ if (-not (Get-Module -ListAvailable -Name MSCatalogLTS)) {
 
 Import-Module MSCatalogLTS -Force
 
+$totalVersions = $Versions.Count
+$currentStep = 0
+
 foreach ($ver in $Versions) {
+    $currentStep++
+    $pct = [math]::Min(100, [int](($currentStep / $totalVersions) * 100))
+    Write-Progress -Activity "Downloading Windows 11 updates" -Status "Version $ver ($currentStep of $totalVersions)" -PercentComplete $pct -CurrentOperation ""
+
     $folderName = "Win11_$ver"
     $SavePath = Join-Path $BasePath $folderName
 
@@ -51,9 +61,11 @@ foreach ($ver in $Versions) {
     Get-ChildItem $SavePath -Filter "*.msu" -ErrorAction SilentlyContinue | Remove-Item -Force
 
     $searchQuery = "Cumulative Update for Windows 11 Version $ver for x64"
-    Write-Host "Searching: $searchQuery"
+    $ts = Get-Date -Format "HH:mm:ss"
+    Write-Host "[$ts] Searching: $searchQuery"
 
     try {
+        Write-Progress -Activity "Downloading Windows 11 updates" -Status "Version $ver ($currentStep of $totalVersions)" -PercentComplete $pct -CurrentOperation "Searching catalog..."
         $updates = Get-MSCatalogUpdate -Search $searchQuery
         if ($updates -and $updates.Count -gt 0) {
             # Prefer x64 (exclude arm64)
@@ -61,15 +73,22 @@ foreach ($ver in $Versions) {
             if (-not $latest) {
                 $latest = $updates | Select-Object -First 1
             }
-            Write-Host "Downloading: $($latest.Title)"
+            Write-Progress -Activity "Downloading Windows 11 updates" -Status "Version $ver ($currentStep of $totalVersions)" -PercentComplete $pct -CurrentOperation "Downloading $($latest.Title)..."
+            $ts = Get-Date -Format "HH:mm:ss"
+            Write-Host "[$ts] Downloading: $($latest.Title)"
             Save-MSCatalogUpdate -Update $latest -Destination $SavePath -DownloadAll
-            Write-Host "Saved to $SavePath"
+            $ts = Get-Date -Format "HH:mm:ss"
+            Write-Host "[$ts] Saved to $SavePath"
         } else {
-            Write-Host "No updates found for $ver"
+            $ts = Get-Date -Format "HH:mm:ss"
+            Write-Host "[$ts] No updates found for $ver"
         }
     } catch {
-        Write-Host "Error for $ver : $_"
+        $ts = Get-Date -Format "HH:mm:ss"
+        Write-Host "[$ts] Error for $ver : $_"
     }
 }
 
-Write-Host "=== Download Complete ==="
+Write-Progress -Activity "Downloading Windows 11 updates" -Completed
+$ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+Write-Host "[$ts] === Download Complete ==="
