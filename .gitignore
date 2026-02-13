@@ -1,0 +1,4 @@
+# Runtime logs and CSV
+logs/
+# Downloaded updates (large MSU files)
+Updates/
